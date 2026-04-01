@@ -5,20 +5,37 @@ import java.util.Map;
  * Entry point for the HDB Resale Property Analysis System.
  *
  * Workflow:
- *   1. Parse the matriculation number into a QuerySpec (fixed year, startMonth, towns).
- *   2. Build the column store and all auxiliary structures (index, zone map, etc.).
- *   3. Iterate over all (x, y) pairs: x in [1,8], y in [80,150].
- *   4. For each pair, find the record with the minimum price/sqm that is <= 4725.
- *   5. Write results to ScanResult_<MatricNum>.csv, ordered by x then y.
+ *   Phase 1 — Column file build (first run only):
+ *     ColumnStoreWriter reads ResalePricesSingapore.csv and writes one CSV
+ *     file per column under the columns/ directory. A READY marker file is
+ *     written on success. Subsequent runs detect the marker and skip this phase.
  *
- * The shared-scan method pre-computes results for all (x,y) pairs in one pass
- * and is used as the default query strategy for output.  The other three methods
- * (normal, index, compressed) are also demonstrated for comparison.
+ *   Phase 2 — Load and index:
+ *     PropertyDataStore reads the column files into typed primitive arrays and
+ *     builds the auxiliary structures (compression, sort, MultiKeyIndex, ZoneMap).
+ *
+ *   Phase 3 — Query and output:
+ *     Shared scan pre-computes results for all (x, y) pairs in one pass.
+ *     Results are written to ScanResult_<MatricNum>.csv ordered by x then y.
+ *
+ *   Phase 4 — Benchmark (optional):
+ *     All four query methods are timed on a sample (x=3, y=80) for comparison.
+ *
+ * Timing summary:
+ *   - Phase 1 time reflects the cost of writing column files from CSV (first run)
+ *     vs. the near-zero cost of the isReady() existence check (subsequent runs).
+ *   - Phase 2 load time reflects reading from the pre-built column files.
+ *   - Comparing Phase 1 + Phase 2 across first vs. subsequent runs shows the
+ *     benefit of persistent column storage.
  */
 public class Main {
 
     // Change this to the chosen group member's matriculation number.
-    private static final String MATRIC_NUMBER = "A6626226B";
+    private static final String MATRIC_NUMBER = "U2322225H";
+
+    // Paths
+    private static final String INPUT_CSV = "ResalePricesSingapore.csv";
+    private static final String COL_DIR   = "columns/";
 
     public static void main(String[] args) {
         System.out.println("=======================================================");
@@ -26,50 +43,94 @@ public class Main {
         System.out.println("=======================================================");
 
         // ------------------------------------------------------------------
-        // 1. Parse query specification from matriculation number
+        // Phase 1: Build column files (skipped if already built)
         // ------------------------------------------------------------------
-        System.out.println("\n--- Parsing query specification ---");
+        System.out.println("\n--- Phase 1: Column store build ---");
+        ColumnStoreWriter writer = new ColumnStoreWriter(INPUT_CSV, COL_DIR);
+        boolean alreadyBuilt = writer.isReady();
+
+        long phase1Start = System.nanoTime();
+        if (alreadyBuilt) {
+            System.out.println("Column files already exist — skipping CSV parse.");
+        } else {
+            System.out.println("Column files not found — building from CSV...");
+            writer.run();
+            System.out.println("Column files written successfully.");
+        }
+        long phase1End = System.nanoTime();
+
+        System.out.printf("Phase 1 time : %,d ns (%.3f s)  [%s]%n",
+                (phase1End - phase1Start),
+                (phase1End - phase1Start) / 1_000_000_000.0,
+                alreadyBuilt ? "skipped — column files already present"
+                        : "CSV parsed and column files written");
+
+        // ------------------------------------------------------------------
+        // Phase 2: Parse query spec, load column files, build indexes
+        // ------------------------------------------------------------------
+        System.out.println("\n--- Phase 2: Load and index ---");
+
+        System.out.println("Parsing query specification...");
         QuerySpec spec = PropertyDataStore.buildQuerySpec(MATRIC_NUMBER);
 
-        // ------------------------------------------------------------------
-        // 2. Initialise column store
-        // ------------------------------------------------------------------
-        System.out.println("\n--- Loading data ---");
-        PropertyDataStore db = new PropertyDataStore();
+        // --- Load column files ---
+        System.out.println("\nLoading column files...");
+        long loadStart = System.nanoTime();
+        PropertyDataStore db = new PropertyDataStore(COL_DIR);
+        long loadEnd = System.nanoTime();
+        System.out.printf("Column file load time         : %,d ns (%.3f s)%n",
+                (loadEnd - loadStart),
+                (loadEnd - loadStart) / 1_000_000_000.0);
 
-        // ------------------------------------------------------------------
-        // 3. Build auxiliary structures
-        // ------------------------------------------------------------------
-        System.out.println("\n--- Building auxiliary structures ---");
-        System.out.println("Compressing town and date data...");
+        // --- Build auxiliary structures ---
+        System.out.println("\nBuilding auxiliary structures...");
+        long indexStart = System.nanoTime();
+
+        System.out.println("  Compressing town and date data...");
         db.compressTownDate();
-        System.out.println("Sorting by compressed data...");
+        System.out.println("  Sorting by compressed data...");
         db.sortByCompressedData();
-        System.out.println("Building MultiKeyIndex...");
+        System.out.println("  Building MultiKeyIndex...");
         db.buildIndex();
-        System.out.println("Creating ZoneMap...");
+        System.out.println("  Creating ZoneMap...");
         db.createZoneMap();
 
+        long indexEnd = System.nanoTime();
+        System.out.printf("Auxiliary structure build time : %,d ns (%.3f s)%n",
+                (indexEnd - indexStart),
+                (indexEnd - indexStart) / 1_000_000_000.0);
+
+        System.out.printf("Phase 2 total time            : %,d ns (%.3f s)%n",
+                (indexEnd - loadStart),
+                (indexEnd - loadStart) / 1_000_000_000.0);
+
+        // --- Combined Phase 1 + Phase 2 summary ---
+        System.out.println("\n-------------------------------------------------------");
+        System.out.printf("TOTAL startup time (Phase 1 + Phase 2) : %,d ns (%.3f s)%n",
+                (phase1End - phase1Start) + (indexEnd - loadStart),
+                ((phase1End - phase1Start) + (indexEnd - loadStart)) / 1_000_000_000.0);
+        System.out.println("  (First run:       CSV parse + column write + load + index build)");
+        System.out.println("  (Subsequent runs: column file load + index build only)");
+        System.out.println("-------------------------------------------------------");
+
         // ------------------------------------------------------------------
-        // 4. Shared scan — compute all (x, y) results in one pass
+        // Phase 3: Shared scan + output
         // ------------------------------------------------------------------
-        System.out.println("\n--- Running shared scan (all x, y pairs) ---");
+        System.out.println("\n--- Phase 3: Shared scan (all x, y pairs) ---");
         long t0 = System.nanoTime();
         Map<Integer, ArrayList<Integer>> sharedResults = db.sharedScanQueryDB(spec);
         long t1 = System.nanoTime();
-        System.out.printf("Shared scan completed in %,d ns%n", (t1 - t0));
+        System.out.printf("Shared scan completed in %,d ns (%.3f s)%n",
+                (t1 - t0), (t1 - t0) / 1_000_000_000.0);
 
-        // ------------------------------------------------------------------
-        // 5. Write output file
-        // ------------------------------------------------------------------
         String outputFile = "ScanResult_" + MATRIC_NUMBER;
-        System.out.println("\n--- Writing output: " + outputFile + ".csv ---");
+        System.out.println("\nWriting output: " + outputFile + ".csv");
         db.createOutputFile(outputFile);
 
-        int validCount = 0;
+        int validCount    = 0;
         int noResultCount = 0;
 
-        // Results must be ordered: x ascending, then y ascending
+        // Results ordered: x ascending, then y ascending
         for (int x = 1; x <= 8; x++) {
             for (int y = 80; y <= 150; y++) {
                 ArrayList<Integer> posArray = sharedResults.get(x * 1000 + y);
@@ -84,8 +145,7 @@ public class Main {
                 validCount, noResultCount);
 
         // ------------------------------------------------------------------
-        // 6. Optional: benchmark comparison of all four query methods
-        //    Uses (x=3, y=80) as a representative sample query.
+        // Phase 4: Benchmark — all four query methods on (x=3, y=80)
         // ------------------------------------------------------------------
         System.out.println("\n=======================================================");
         System.out.println("   BENCHMARK: four query methods for (x=3, y=80)");
@@ -93,28 +153,24 @@ public class Main {
 
         int sampleX = 3, sampleY = 80;
 
-        // Normal (sequential scan)
-        long s = System.nanoTime();
-        ArrayList<Integer> normalRes = db.queryDB(spec, sampleX, sampleY);
-        long e = System.nanoTime();
-        System.out.printf("Normal scan     : %5d records  %,12d ns%n",
-                normalRes.size(), (e - s));
+        long s, e;
 
-        // Index-based
+        s = System.nanoTime();
+        ArrayList<Integer> normalRes = db.queryDB(spec, sampleX, sampleY);
+        e = System.nanoTime();
+        System.out.printf("Normal scan     : %5d records  %,12d ns%n", normalRes.size(), (e - s));
+
         s = System.nanoTime();
         ArrayList<Integer> indexRes = db.queryDBIndex(spec, sampleX, sampleY);
         e = System.nanoTime();
-        System.out.printf("Index scan      : %5d records  %,12d ns%n",
-                indexRes.size(), (e - s));
+        System.out.printf("Index scan      : %5d records  %,12d ns%n", indexRes.size(), (e - s));
 
-        // Compressed + ZoneMap + Sorted
         s = System.nanoTime();
         ArrayList<Integer> compRes = db.queryCompressedDB(spec, sampleX, sampleY);
         e = System.nanoTime();
-        System.out.printf("Compressed scan : %5d records  %,12d ns%n",
-                compRes.size(), (e - s));
+        System.out.printf("Compressed scan : %5d records  %,12d ns%n", compRes.size(), (e - s));
 
-        // Shared scan (already computed above — just retrieve from map)
+        // Shared scan result already computed — just retrieve from map
         s = System.nanoTime();
         ArrayList<Integer> sharedSample = sharedResults.get(sampleX * 1000 + sampleY);
         e = System.nanoTime();
