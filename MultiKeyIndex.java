@@ -12,7 +12,6 @@ public class MultiKeyIndex {
     private final int monthDimension;
     private final int locationDimension;
 
-    // Three-dimensional array to store record indices
     private ArrayList<Integer>[][][] indexStructure;
 
     /**

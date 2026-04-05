@@ -33,7 +33,6 @@ public class Main {
     // Change this to the chosen group member's matriculation number.
     private static final String MATRIC_NUMBER = "U2322225H";
 
-    // Paths
     private static final String INPUT_CSV = "ResalePricesSingapore.csv";
     private static final String COL_DIR   = "columns/";
 
@@ -42,9 +41,6 @@ public class Main {
         System.out.println("         HDB RESALE PROPERTY ANALYSIS SYSTEM           ");
         System.out.println("=======================================================");
 
-        // ------------------------------------------------------------------
-        // Phase 1: Build column files (skipped if already built)
-        // ------------------------------------------------------------------
         System.out.println("\n--- Phase 1: Column store build ---");
         ColumnStoreWriter writer = new ColumnStoreWriter(INPUT_CSV, COL_DIR);
         boolean alreadyBuilt = writer.isReady();
@@ -65,15 +61,11 @@ public class Main {
                 alreadyBuilt ? "skipped — column files already present"
                         : "CSV parsed and column files written");
 
-        // ------------------------------------------------------------------
-        // Phase 2: Parse query spec, load column files, build indexes
-        // ------------------------------------------------------------------
         System.out.println("\n--- Phase 2: Load and index ---");
 
         System.out.println("Parsing query specification...");
         QuerySpec spec = PropertyDataStore.buildQuerySpec(MATRIC_NUMBER);
 
-        // --- Load column files ---
         System.out.println("\nLoading column files...");
         long loadStart = System.nanoTime();
         PropertyDataStore db = new PropertyDataStore(COL_DIR);
@@ -82,7 +74,6 @@ public class Main {
                 (loadEnd - loadStart),
                 (loadEnd - loadStart) / 1_000_000_000.0);
 
-        // --- Build auxiliary structures ---
         System.out.println("\nBuilding auxiliary structures...");
         long indexStart = System.nanoTime();
 
@@ -104,7 +95,6 @@ public class Main {
                 (indexEnd - loadStart),
                 (indexEnd - loadStart) / 1_000_000_000.0);
 
-        // --- Combined Phase 1 + Phase 2 summary ---
         System.out.println("\n-------------------------------------------------------");
         System.out.printf("TOTAL startup time (Phase 1 + Phase 2) : %,d ns (%.3f s)%n",
                 (phase1End - phase1Start) + (indexEnd - loadStart),
@@ -113,9 +103,6 @@ public class Main {
         System.out.println("  (Subsequent runs: column file load + index build only)");
         System.out.println("-------------------------------------------------------");
 
-        // ------------------------------------------------------------------
-        // Phase 3: Shared scan + output
-        // ------------------------------------------------------------------
         System.out.println("\n--- Phase 3: Shared scan (all x, y pairs) ---");
         long t0 = System.nanoTime();
         Map<Integer, ArrayList<Integer>> sharedResults = db.sharedScanQueryDB(spec);
@@ -144,9 +131,6 @@ public class Main {
         System.out.printf("Output written: %d valid pairs, %d no-result pairs.%n",
                 validCount, noResultCount);
 
-        // ------------------------------------------------------------------
-        // Phase 4: Benchmark — all four query methods on (x=3, y=80)
-        // ------------------------------------------------------------------
         System.out.println("\n=======================================================");
         System.out.println("   BENCHMARK: four query methods for (x=3, y=80)");
         System.out.println("=======================================================");
