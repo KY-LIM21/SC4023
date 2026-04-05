@@ -17,9 +17,6 @@ import java.util.*;
  */
 public class PropertyDataStore {
 
-    // -------------------------------------------------------------------------
-    // Column arrays (typed — parsed once at load time)
-    // -------------------------------------------------------------------------
     private int[]    col_year;
     private int[]    col_month;
     private String[] col_town;
@@ -31,9 +28,6 @@ public class PropertyDataStore {
 
     private int totalRows;
 
-    // -------------------------------------------------------------------------
-    // Compression / index structures
-    // -------------------------------------------------------------------------
     private short[]           encodedRecords;
     private ArrayList<String> townCompressList;
     private ArrayList<String> dateCompressList;
@@ -44,9 +38,6 @@ public class PropertyDataStore {
     private int smallestYear = 9999;
     private int largestYear  = 0;
 
-    // -------------------------------------------------------------------------
-    // Constants
-    // -------------------------------------------------------------------------
     static final String[] TOWN_LIST = {
         "BEDOK", "BUKIT PANJANG", "CLEMENTI", "CHOA CHU KANG", "HOUGANG",
         "JURONG WEST", "PASIR RIS", "TAMPINES", "WOODLANDS", "YISHUN"
@@ -59,10 +50,6 @@ public class PropertyDataStore {
 
     private static final double MAX_PRICE_PER_SQM = 4725.0;
 
-    // -------------------------------------------------------------------------
-    // Constructor
-    // -------------------------------------------------------------------------
-
     /**
      * Loads column files from the given directory into typed arrays.
      * ColumnStoreWriter must have already run successfully (READY marker present).
@@ -74,10 +61,6 @@ public class PropertyDataStore {
         dateCompressList = new ArrayList<>();
         loadFromColumnFiles(colDir);
     }
-
-    // =========================================================================
-    // QUERY SPEC INITIALISATION
-    // =========================================================================
 
     /**
      * Parses a matriculation number and returns a QuerySpec containing the
@@ -126,10 +109,6 @@ public class PropertyDataStore {
         return new QuerySpec(targetYear, startMonth, targetTowns);
     }
 
-    // =========================================================================
-    // DATA LOADING — from column CSV files
-    // =========================================================================
-
     /**
      * Counts rows, allocates typed arrays, loads each column file, then
      * populates the town compress list and year range needed for auxiliary
@@ -159,7 +138,6 @@ public class PropertyDataStore {
         loadIntColumn   (colDir + "col_lease.csv",      col_lease);
         loadDoubleColumn(colDir + "col_price.csv",      col_price);
 
-        // Build town list and year range (needed by compressTownDate)
         for (int i = 0; i < totalRows; i++) {
             String town = col_town[i];
             if (!townCompressList.contains(town)) townCompressList.add(town);
@@ -232,18 +210,10 @@ public class PropertyDataStore {
             && col_year.length == col_price.length;
     }
 
-    // =========================================================================
-    // DATE / ENCODING HELPERS
-    // =========================================================================
-
     /** (month 1-12, full year) -> "Jan-15" — used only for building the date dictionary. */
     private static String formatDate(int month, int year) {
         return String.format("%s-%02d", MONTH_ABBR[month - 1], year % 100);
     }
-
-    // =========================================================================
-    // DATA PREPARATION  (compression, sorting, index, zone map)
-    // =========================================================================
 
     /**
      * Encodes each record's (town, date) pair into a single short value.
@@ -357,15 +327,6 @@ public class PropertyDataStore {
         return Arrays.asList(TOWN_LIST).indexOf(town);
     }
 
-    // =========================================================================
-    // QUERY METHODS
-    // All four share the same filter logic:
-    //   col_year[i]  == spec.targetYear
-    //   col_month[i] in [spec.startMonth, spec.startMonth + x - 1]
-    //   col_town[i]  in spec.targetTowns
-    //   col_area[i]  >= y
-    // =========================================================================
-
     /** Builds the inclusive list of target months for a given (spec, x). */
     private ArrayList<Integer> buildTargetMonths(QuerySpec spec, int x) {
         ArrayList<Integer> months = new ArrayList<>();
@@ -373,10 +334,6 @@ public class PropertyDataStore {
             months.add(m);
         return months;
     }
-
-    // -------------------------------------------------------------------------
-    // 1. Normal (sequential scan)
-    // -------------------------------------------------------------------------
 
     /**
      * Sequential scan over every record.
@@ -401,10 +358,6 @@ public class PropertyDataStore {
 
         return finalPosArray;
     }
-
-    // -------------------------------------------------------------------------
-    // 2. Index-based query
-    // -------------------------------------------------------------------------
 
     /**
      * Uses the MultiKeyIndex to jump directly to candidates.
@@ -431,10 +384,6 @@ public class PropertyDataStore {
 
         return finalPosArray;
     }
-
-    // -------------------------------------------------------------------------
-    // 3. Compressed + ZoneMap + Sorted query
-    // -------------------------------------------------------------------------
 
     /**
      * Uses the sorted encoded array and ZoneMap to narrow the scan range.
@@ -468,10 +417,6 @@ public class PropertyDataStore {
 
         return finalPosArray;
     }
-
-    // -------------------------------------------------------------------------
-    // 4. Shared scan
-    // -------------------------------------------------------------------------
 
     /**
      * Single pass over all records, populating results for every (x, y) pair
@@ -508,10 +453,6 @@ public class PropertyDataStore {
 
         return resultMap;
     }
-
-    // =========================================================================
-    // RESULT CALCULATION
-    // =========================================================================
 
     /**
      * Represents one output row: the record achieving the minimum price/sqm
@@ -585,10 +526,6 @@ public class PropertyDataStore {
         );
     }
 
-    // =========================================================================
-    // OUTPUT FILE
-    // =========================================================================
-
     private FileWriter fw;
 
     /** Creates the output CSV file with its header row. */
@@ -625,10 +562,6 @@ public class PropertyDataStore {
             throw new RuntimeException("Failed to close output file", e);
         }
     }
-
-    // =========================================================================
-    // UTILITY
-    // =========================================================================
 
     /**
      * Binary search for the boundary of a value in the sorted encodedRecords array.

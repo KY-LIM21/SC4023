@@ -29,7 +29,6 @@ public class ColumnStoreWriter {
     private final String inputCsvPath;
     private final String colDir;
 
-    // Month abbreviation -> number mapping
     private static final Map<String, Integer> MONTH_MAP = new HashMap<>();
     static {
         MONTH_MAP.put("Jan", 1);  MONTH_MAP.put("Feb", 2);
@@ -66,10 +65,6 @@ public class ColumnStoreWriter {
         writeColumnFiles();
     }
 
-    // =========================================================================
-    // PRIVATE HELPERS
-    // =========================================================================
-
     private void createDirectory() {
         File dir = new File(colDir);
         if (!dir.exists()) {
@@ -85,7 +80,6 @@ public class ColumnStoreWriter {
         try {
             BufferedReader br = new BufferedReader(new FileReader(inputCsvPath));
 
-            // Open one writer per column
             BufferedWriter w_year       = new BufferedWriter(new FileWriter(colDir + "col_year.csv"));
             BufferedWriter w_month      = new BufferedWriter(new FileWriter(colDir + "col_month.csv"));
             BufferedWriter w_town       = new BufferedWriter(new FileWriter(colDir + "col_town.csv"));
@@ -106,7 +100,6 @@ public class ColumnStoreWriter {
 
                 String[] parts = line.split(",");
 
-                // Require all 10 fields; skip malformed rows
                 if (parts.length < 10) {
                     skipCount++;
                     System.out.println("  Warning: skipped malformed row " + lineCount
@@ -114,7 +107,6 @@ public class ColumnStoreWriter {
                     continue;
                 }
 
-                // Check for any empty field
                 boolean hasEmpty = false;
                 for (int k = 0; k < 10; k++) {
                     if (parts[k] == null || parts[k].trim().isEmpty()) {
@@ -128,7 +120,6 @@ public class ColumnStoreWriter {
                     continue;
                 }
 
-                // --- Parse date field (format: "Jan-15") ---
                 String[] dateParts = parts[0].trim().split("-");
                 if (dateParts.length < 2 || !MONTH_MAP.containsKey(dateParts[0])) {
                     skipCount++;
@@ -139,7 +130,6 @@ public class ColumnStoreWriter {
                 int fullYear = 2000 + Integer.parseInt(dateParts[1].trim());
                 int monthNum = MONTH_MAP.get(dateParts[0]);
 
-                // --- Parse remaining fields ---
                 String town      = parts[1].trim();
                 // parts[2] = flat_type    (not needed for queries or output — skipped)
                 String block     = parts[3].trim();
@@ -150,7 +140,6 @@ public class ColumnStoreWriter {
                 int    lease     = Integer.parseInt(parts[8].trim());
                 double price     = Double.parseDouble(parts[9].trim());
 
-                // --- Write one value per column file ---
                 w_year.write(String.valueOf(fullYear));    w_year.newLine();
                 w_month.write(String.valueOf(monthNum));   w_month.newLine();
                 w_town.write(town);                        w_town.newLine();
@@ -163,7 +152,6 @@ public class ColumnStoreWriter {
                 writeCount++;
             }
 
-            // Close all writers — ensures all data is flushed before READY is written
             br.close();
             w_year.close();
             w_month.close();
@@ -177,7 +165,6 @@ public class ColumnStoreWriter {
             System.out.println("  Rows written : " + writeCount);
             System.out.println("  Rows skipped : " + skipCount);
 
-            // Write READY marker only after all column files are fully closed
             new FileWriter(colDir + READY_MARKER).close();
             System.out.println("  READY marker written: " + colDir + READY_MARKER);
 
