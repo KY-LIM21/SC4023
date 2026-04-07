@@ -1,86 +1,83 @@
 import java.util.ArrayList;
 
 /**
- * Spatial partitioning system for efficient range queries on encoded data.
- * Works similarly to a zone map, dividing sorted encoded data into contiguous
- * partitions. Each partition stores its maximum encoded value and its end index.
+ * Partition-based structure for pruning range scans over sorted encoded data.
+ * Divides the sorted encoded array into contiguous partitions, each storing
+ * its maximum encoded value and its end index.
  *
- * Used by queryCompressedDB() in PropertyDataStore to prune the scan range
- * before doing fine-grained sequential verification. For multi-town queries,
- * the caller invokes getZone() once per town and unions results.
+ * Used by queryCompressedDB() in PropertyDataStore to narrow the scan window
+ * before fine-grained sequential verification. For multi-town queries, the
+ * caller invokes queryZone() once per town and merges the results.
  */
 public class ZoneMap {
-    private ArrayList<Short> partitionMaxValues;
-    private ArrayList<Integer> partitionEndIndices;
+    private ArrayList<Short>   zoneMaxVals;
+    private ArrayList<Integer> zoneEndIdx;
 
     /**
-     * Constructor initializes partition lists.
+     * Initialises empty partition lists.
      */
     public ZoneMap() {
-        partitionMaxValues   = new ArrayList<>();
-        partitionEndIndices  = new ArrayList<>();
+        zoneMaxVals = new ArrayList<>();
+        zoneEndIdx  = new ArrayList<>();
     }
 
     /**
-     * Adds a partition with its maximum encoded value and its end index.
+     * Registers a partition with its maximum encoded value and physical end index.
      */
-    public void addZone(short maxValue, int endIndex) {
-        partitionMaxValues.add(maxValue);
-        partitionEndIndices.add(endIndex);
+    public void addPartition(short maxValue, int endIndex) {
+        zoneMaxVals.add(maxValue);
+        zoneEndIdx.add(endIndex);
     }
 
     /**
-     * Displays partition information for debugging.
+     * Prints partition details for debugging purposes.
      */
-    public void printZones() {
+    public void printPartitions() {
         System.out.println("Zone Largest Arr:");
-        for (int i = 0; i < partitionMaxValues.size(); i++)
-            System.out.printf("%d,", partitionMaxValues.get(i));
+        for (int i = 0; i < zoneMaxVals.size(); i++)
+            System.out.printf("%d,", zoneMaxVals.get(i));
         System.out.println();
     }
 
     /**
-     * Gets physical index boundaries for a value range query.
-     * Returns [startPartitionLower, startPartitionUpper,
-     *          endPartitionLower,   endPartitionUpper].
+     * Returns physical index boundaries for an encoded value range query.
+     * Result is [loZoneLower, loZoneUpper, hiZoneLower, hiZoneUpper].
      */
-    public int[] getZone(short startValue, short endValue) {
-        int[] boundaries = new int[]{-1, -1, -1, -1};
+    public int[] queryZone(short loEnc, short hiEnc) {
+        int[] bounds = new int[]{-1, -1, -1, -1};
 
-        int startPartition = findZone(0, partitionMaxValues.size() - 1, startValue);
-        int endPartition   = findZone(startPartition, partitionMaxValues.size() - 1, endValue);
+        int loZone = locateZone(0, zoneMaxVals.size() - 1, loEnc);
+        int hiZone = locateZone(loZone, zoneMaxVals.size() - 1, hiEnc);
 
-        boundaries[0] = (startPartition > 0)
-                ? partitionEndIndices.get(startPartition - 1) + 1 : 0;
-        boundaries[1] = partitionEndIndices.get(startPartition);
+        bounds[0] = (loZone > 0) ? zoneEndIdx.get(loZone - 1) + 1 : 0;
+        bounds[1] = zoneEndIdx.get(loZone);
 
-        boundaries[2] = (endPartition > 0)
-                ? partitionEndIndices.get(endPartition - 1) + 1 : 0;
-        boundaries[3] = partitionEndIndices.get(endPartition);
+        bounds[2] = (hiZone > 0) ? zoneEndIdx.get(hiZone - 1) + 1 : 0;
+        bounds[3] = zoneEndIdx.get(hiZone);
 
-        return boundaries;
+        return bounds;
     }
 
     /**
-     * Finds the partition whose maximum value is >= searchValue.
+     * Finds the partition whose maximum value is >= target.
      * Uses linear search for small ranges and binary search for larger ones.
      */
-    private int findZone(int startIndex, int endIndex, short searchValue) {
+    private int locateZone(int startIndex, int endIndex, short target) {
         int current = startIndex;
         int last    = endIndex;
 
         while (true) {
-            int rangeSize = last - current;
+            int span = last - current;
 
-            if (rangeSize <= 5) {
+            if (span <= 5) {
                 for (int i = current; i <= endIndex; i++)
-                    if (searchValue <= partitionMaxValues.get(i))
+                    if (target <= zoneMaxVals.get(i))
                         return i;
                 return current;
             } else {
-                int mid = current + (rangeSize / 2);
-                if (searchValue < partitionEndIndices.get(mid)) {
-                    if (searchValue > partitionEndIndices.get(mid - 1))
+                int mid = current + (span / 2);
+                if (target < zoneEndIdx.get(mid)) {
+                    if (target > zoneEndIdx.get(mid - 1))
                         return mid;
                     last = mid;
                 } else {
